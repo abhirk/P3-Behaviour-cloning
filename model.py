@@ -1,94 +1,91 @@
 import csv
 import cv2
+import os
+import traceback
 import numpy as np
+import tqdm
+from sklearn.utils import shuffle
 
-from keras.model import Sequential, Model
-from keras.layers import Flatten, Dense, Lambda        # Lambda for preprocessing
+CSV_FILE = "data/driving_log.csv"
+IMG_DIR = "data/IMG/"
+STEERING_CORRECTION = 0.2
+
+images = []
+measurements = []
+
+samples = []
+with open(CSV_FILE) as csvfile:
+    reader = csv.reader(csvfile)
+    for line in reader:
+        samples.append(line)
+
+
+def generator(samples, batch_size=32):
+    num_samples = len(samples)
+    while 1:  # Loop forever so the generator never terminates
+        shuffle(samples)
+        for offset in range(0, num_samples, batch_size):
+            batch_samples = samples[offset:offset + batch_size]
+
+            images = []
+            angles = []
+            for batch_sample in batch_samples:
+                name = IMG_DIR + batch_sample[0].split('/')[-1]
+                center_image = cv2.imread(name)
+                center_angle = float(batch_sample[3])
+                images.append(center_image)
+                angles.append(center_angle)
+
+            # trim image to only see section with road
+            X_train = np.array(images)
+            y_train = np.array(angles)
+            yield shuffle(X_train, y_train)
+
+
+
+from sklearn.model_selection import train_test_split
+
+train_samples, validation_samples = train_test_split(samples, test_size=0.2)
+
+print("Collecting dataset...."),
+try:
+    train_generator = generator(train_samples, batch_size=32)
+    validation_generator = generator(validation_samples, batch_size=32)
+except:
+    traceback.print_exc()
+print("done")
+
+
+from keras.models import Sequential, Model
+from keras.layers import Lambda, Flatten, Dense, Dropout
+from keras.layers import Cropping2D
 from keras.layers.convolutional import Convolution2D
 from keras.layers.pooling import MaxPooling2D
-from keras.layers import Cropping2D                     # Crop the images
+from keras.layers.normalization import BatchNormalization
+#from keras.layers import Conv2D, MaxPooling2D
 
-import keras.models import Model
-import matplotlib.pyplot as plt
+print("Training model...")
+model = Sequential()
+model.add(Lambda(lambda x: (x / 255.0) - 0.5, input_shape=(160,320,3),  output_shape=(160,320,3)))
+#cropping default 50,20
+model.add(BatchNormalization())
+model.add(Cropping2D(cropping=((70,25), (0,0)), input_shape=(160,320,3)))
+model.add(Convolution2D(24, 5, 5, activation="relu", subsample=(2, 2)))
+model.add(Convolution2D(36, 5, 5, activation="relu", subsample=(2, 2)))
+model.add(Convolution2D(48, 5, 5, activation="relu", subsample=(2, 2)))
+model.add(Convolution2D(64, 3, 3, activation="relu"))
+model.add(Convolution2D(64, 3, 3, activation="relu"))
+model.add(Flatten()) #Flatten(input_shape=(160,320,3)
+model.add(Dense(100))
+model.add(Dropout(0.2))
+model.add(Dense(50))
+model.add(Dropout(0.2))
+model.add(Dense(10))
+model.add(Dropout(0.2))
+model.add(Dense(1))
 
-def plot_training_validation_loss(history_object):
-    """
-    Plot the training and validation loss from model.fit or model.fit_generator
-    using matplotlib
-
-    :param history_object: object returned by model.fit
-    :return: None
-    """
-    print(history_object.history.keys())
-
-    ### plot the training and validation loss for each epoch
-    plt.plot(history_object.history['loss'])
-    plt.plot(history_object.history['val_loss'])
-    plt.title('model mean squared error loss')
-    plt.ylabel('mean squared error loss')
-    plt.xlabel('epoch')
-    plt.legend(['training set', 'validation set'], loc='upper right')
-    plt.show()
-
-def augment_image(image):
-    """
-    Return an augmented copy of the original image. augmentation can be brightness,shift horizontal or vertical
-
-    :param image: Image from the driving log
-    :return: augmented_image: Transformed image
-    Note: Keras has Imagedatagenerator which can augment images in batches, so this might be unnecessary.
-    """
-
-    pass
-
-def augmented_dataset(images, measurements):
-    """
-    Take the original images and measurements and return an augmented dataset
-    TODO: Make this a generator
-
-    :param images: Original images from the driving log
-    :param measurements: steering wheel measurement for that image
-    :return: augmented_images, augmented_measurements
-    """
-
-def flipped_image(image):
-    """
-    Return flipped image
-
-    :param image: Original image
-    :return: flipped image
-    """
-    return np.fliplr(image)
-
-
-def get_measurements_from_log(csv_file):
-    """
-    Get the input dataset and the measurements from the driving log
-    and return the image and measurements
-    When processing each line we randomly flip the measurement.
-    Check if it is fine adding only the flipped images
-    Also note that we add images from all three measurements
-    A constant 0.2 is used to derive the steering wheel measurements for left and right
-    This parameter needs to be tuned.
-
-    :param csv_file:
-    :return:
-    """
-    pass
-
-def model(X_train, Y_train):
-    """
-    Steps to fit the model for augmented images and measurements, and save it at model.h5
-
-    :param X_train: Images from the driving log
-    :param Y_train: Steering wheel measurements
-    :return: None
-
-    """
-
-    pass
-
-
-
-
+model.compile(loss="mse", optimizer="adam")
+model.fit_generator(train_generator, samples_per_epoch= len(train_samples), validation_data=validation_generator,
+                    nb_val_samples=len(validation_samples), nb_epoch=5)
+model.save("model.h5")
 
